@@ -142,6 +142,9 @@ jobs:
         $VERSION = "${{ steps.get_version.outputs.VERSION }}"
         $STAGING = (Resolve-Path "publish\staging").Path
 
+        # Create output directory
+        New-Item -ItemType Directory -Path "publish\output" -Force | Out-Null
+
         # Ensure installer.nsi is UTF-8 with BOM
         $file = (Resolve-Path "publish\installer.nsi").Path
         $content = Get-Content $file -Raw -Encoding UTF8
@@ -157,7 +160,7 @@ jobs:
         & $nsis /DVERSION=$VERSION "/DSTAGINGDIR=$STAGING" publish\installer.nsi
 
         # Copy output to release artifacts
-        New-Item -ItemType Directory -Path "release-artifacts" | Out-Null
+        New-Item -ItemType Directory -Path "release-artifacts" -Force | Out-Null
         Copy-Item "publish\output\AntBrowser-Setup-$VERSION.exe" "release-artifacts\"
       shell: pwsh
 
