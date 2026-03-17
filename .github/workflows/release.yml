@@ -1,0 +1,648 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'  # 触发条件：推送 v1.0.0, v1.2.3 等格式的标签
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '版本号 (例如：v1.0.0)'
+        required: true
+        default: 'v1.0.0'
+
+permissions:
+  contents: write  # 需要写权限来创建 Release
+
+jobs:
+  # ========== Windows x64 构建 ==========
+  build-windows:
+    name: Build for Windows x64
+    runs-on: windows-latest
+
+    steps:
+    - name: Check out code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.22'
+        cache: true
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+        cache: true
+        cache-dependency-path: frontend/package-lock.json
+
+    - name: Get version
+      id: get_version
+      shell: bash
+      run: |
+        if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+          echo "VERSION=${{ inputs.version }}" >> $GITHUB_OUTPUT
+        else
+          echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Install wails
+      run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
+
+    - name: Install NSIS
+      run: |
+        choco install nsis --no-progress --yes
+        echo "NSIS_PATH=C:\Program Files (x86)\NSIS" >> $env:GITHUB_ENV
+
+    - name: Install frontend dependencies
+      working-directory: frontend
+      run: npm ci
+
+    - name: Install Go dependencies
+      run: |
+        go mod download
+        go mod tidy
+
+    - name: Generate Wails bindings
+      run: |
+        # Create temporary dist directory for wails generate
+        if (!(Test-Path "frontend\dist")) {
+          New-Item -ItemType Directory -Path "frontend\dist" | Out-Null
+          echo "placeholder" > frontend\dist\__wails_placeholder__.txt
+        }
+        wails generate module
+        # Copy bindings to src directory
+        if (Test-Path "frontend\wailsjs") {
+          Copy-Item -Recurse -Force frontend\wailsjs\* frontend\src\wailsjs\
+        }
+        # Cleanup temporary files
+        if (Test-Path "frontend\dist\__wails_placeholder__.txt") {
+          Remove-Item frontend\dist\__wails_placeholder__.txt -Force
+        }
+        if ((Get-ChildItem "frontend\dist" -File).Count -eq 0) {
+          Remove-Item "frontend\dist" -Force
+        }
+      shell: pwsh
+
+    - name: Build frontend
+      working-directory: frontend
+      run: npm run build
+
+    - name: Wails build
+      run: wails build
+
+    - name: Copy runtime dependencies
+      run: |
+        if (Test-Path "bin") {
+          Copy-Item -Recurse -Force bin\* build\bin\bin\
+        }
+      shell: pwsh
+
+    - name: Prepare staging directory
+      run: |
+        $VERSION = "${{ steps.get_version.outputs.VERSION }}"
+        $STAGING = "publish\staging"
+
+        # Create staging directory
+        if (Test-Path $STAGING) {
+          Remove-Item -Recurse -Force $STAGING
+        }
+        New-Item -ItemType Directory -Path $STAGING | Out-Null
+
+        # Copy main executable
+        Copy-Item "build\bin\ant-chrome.exe" "$STAGING\ant-chrome.exe"
+
+        # Copy config template
+        if (Test-Path "publish\config.init.yaml") {
+          Copy-Item "publish\config.init.yaml" "$STAGING\config.yaml"
+        }
+
+        # Copy runtime binaries
+        if (Test-Path "bin") {
+          Copy-Item -Recurse -Force bin\ "$STAGING\bin\"
+        }
+
+        # Copy Chrome core
+        if (Test-Path "chrome") {
+          Copy-Item -Recurse -Force chrome\ "$STAGING\chrome\"
+        }
+
+        # Create empty data directory
+        New-Item -ItemType Directory -Path "$STAGING\data" | Out-Null
+
+        Write-Host "Staging directory prepared successfully"
+      shell: pwsh
+
+    - name: Build NSIS installer
+      run: |
+        $VERSION = "${{ steps.get_version.outputs.VERSION }}"
+        $STAGING = (Resolve-Path "publish\staging").Path
+
+        # Ensure installer.nsi is UTF-8 with BOM
+        $file = (Resolve-Path "publish\installer.nsi").Path
+        $content = Get-Content $file -Raw -Encoding UTF8
+        $utf8BOM = New-Object System.Text.UTF8Encoding $true
+        [System.IO.File]::WriteAllText($file, $content, $utf8BOM)
+
+        # Build installer
+        $nsis = "C:\Program Files (x86)\NSIS\makensis.exe"
+        if (!(Test-Path $nsis)) {
+          $nsis = "C:\Program Files\NSIS\makensis.exe"
+        }
+
+        & $nsis /DVERSION=$VERSION "/DSTAGINGDIR=$STAGING" publish\installer.nsi
+
+        # Copy output to release artifacts
+        New-Item -ItemType Directory -Path "release-artifacts" | Out-Null
+        Copy-Item "publish\output\AntBrowser-Setup-$VERSION.exe" "release-artifacts\"
+      shell: pwsh
+
+    - name: Upload Windows installer
+      uses: actions/upload-artifact@v4
+      with:
+        name: windows-installer
+        path: release-artifacts/*.exe
+        retention-days: 7
+
+    - name: Upload raw executable
+      uses: actions/upload-artifact@v4
+      with:
+        name: windows-raw
+        path: build/bin/ant-chrome.exe
+        retention-days: 7
+
+  # ========== macOS 构建 ==========
+  build-macos:
+    name: Build for macOS
+    runs-on: macos-latest
+
+    steps:
+    - name: Check out code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.22'
+        cache: true
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+        cache: true
+        cache-dependency-path: frontend/package-lock.json
+
+    - name: Get version
+      id: get_version
+      run: |
+        if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+          echo "VERSION=${{ inputs.version }}" >> $GITHUB_OUTPUT
+        else
+          echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Install wails
+      run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
+
+    - name: Install frontend dependencies
+      working-directory: frontend
+      run: npm ci
+
+    - name: Install Go dependencies
+      run: |
+        go mod download
+        go mod tidy
+
+    - name: Generate Wails bindings
+      run: |
+        # Create temporary dist directory for wails generate
+        mkdir -p frontend/dist
+        echo "placeholder" > frontend/dist/__wails_placeholder__.txt
+        wails generate module
+        # Copy bindings to src directory
+        if [ -d "frontend/wailsjs" ]; then
+          cp -r frontend/wailsjs/* frontend/src/wailsjs/
+        fi
+        # Cleanup temporary files
+        rm -f frontend/dist/__wails_placeholder__.txt
+        rmdir frontend/dist 2>/dev/null || true
+
+    - name: Build frontend
+      working-directory: frontend
+      run: npm run build
+
+    - name: Wails build
+      run: wails build
+
+    - name: Copy runtime dependencies
+      run: |
+        if [ -d "bin" ]; then
+          mkdir -p build/bin/bin
+          cp -r bin/* build/bin/bin/
+        fi
+
+    - name: Create DMG structure
+      run: |
+        VERSION="${{ steps.get_version.outputs.VERSION }}"
+        APP_NAME="AntBrowser.app"
+        BUILD_DIR="build/bin"
+        DMG_DIR="publish/dmg"
+
+        mkdir -p "$DMG_DIR/$APP_NAME/Contents/MacOS"
+        mkdir -p "$DMG_DIR/$APP_NAME/Contents/Resources"
+
+        # Copy the app binary
+        cp "$BUILD_DIR/ant-chrome" "$DMG_DIR/$APP_NAME/Contents/MacOS/"
+
+        # Create Info.plist
+        cat > "$DMG_DIR/$APP_NAME/Contents/Info.plist" << EOF
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0">
+        <dict>
+            <key>CFBundleExecutable</key>
+            <string>ant-chrome</string>
+            <key>CFBundleIdentifier</key>
+            <string>com.antbrowser.app</string>
+            <key>CFBundleName</key>
+            <string>Ant Browser</string>
+            <key>CFBundleVersion</key>
+            <string>${VERSION#v}</string>
+            <key>CFBundleShortVersionString</key>
+            <string>${VERSION#v}</string>
+            <key>CFBundlePackageType</key>
+            <string>APPL</string>
+            <key>LSMinimumSystemVersion</key>
+            <string>10.13</string>
+        </dict>
+        </plist>
+        EOF
+
+        # Create PkgInfo
+        echo "APPL????" > "$DMG_DIR/$APP_NAME/Contents/PkgInfo"
+
+        # Copy runtime dependencies if they exist
+        if [ -d "bin" ]; then
+          cp -r bin "$DMG_DIR/$APP_NAME/Contents/MacOS/"
+        fi
+
+        # Copy Chrome core if it exists
+        if [ -d "chrome" ]; then
+          cp -r chrome "$DMG_DIR/$APP_NAME/Contents/MacOS/"
+        fi
+
+    - name: Create DMG
+      run: |
+        VERSION="${{ steps.get_version.outputs.VERSION }}"
+        mkdir -p release-artifacts
+        hdiutil create -volname "AntBrowser" -srcfolder "publish/dmg" -ov -format UDZO "release-artifacts/AntBrowser-${VERSION}-macos.dmg"
+
+    - name: Upload macOS DMG
+      uses: actions/upload-artifact@v4
+      with:
+        name: macos-dmg
+        path: release-artifacts/*.dmg
+        retention-days: 7
+
+  # ========== Linux 构建 ==========
+  build-linux:
+    name: Build for Linux
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Check out code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.22'
+        cache: true
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+        cache: true
+        cache-dependency-path: frontend/package-lock.json
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          libgtk-3-dev \
+          libwebkit2gtk-4.0-dev \
+          libappindicator3-dev \
+          librsvg2-dev \
+          libssl-dev \
+          pkg-config
+
+    - name: Get version
+      id: get_version
+      run: |
+        if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+          echo "VERSION=${{ inputs.version }}" >> $GITHUB_OUTPUT
+        else
+          echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Install wails
+      run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
+
+    - name: Install frontend dependencies
+      working-directory: frontend
+      run: npm ci
+
+    - name: Install Go dependencies
+      run: |
+        go mod download
+        go mod tidy
+
+    - name: Generate Wails bindings
+      run: |
+        # Create temporary dist directory for wails generate
+        mkdir -p frontend/dist
+        echo "placeholder" > frontend/dist/__wails_placeholder__.txt
+        wails generate module
+        # Copy bindings to src directory
+        if [ -d "frontend/wailsjs" ]; then
+          cp -r frontend/wailsjs/* frontend/src/wailsjs/
+        fi
+        # Cleanup temporary files
+        rm -f frontend/dist/__wails_placeholder__.txt
+        rmdir frontend/dist 2>/dev/null || true
+
+    - name: Build frontend
+      working-directory: frontend
+      run: npm run build
+
+    - name: Wails build
+      run: wails build
+
+    - name: Copy runtime dependencies
+      run: |
+        if [ -d "bin" ]; then
+          mkdir -p build/bin/bin
+          cp -r bin/* build/bin/bin/
+        fi
+
+    - name: Create AppImage structure
+      run: |
+        VERSION="${{ steps.get_version.outputs.VERSION }}"
+        APP_DIR="publish/appdir"
+
+        mkdir -p "$APP_DIR/usr/bin"
+        mkdir -p "$APP_DIR/usr/share/applications"
+        mkdir -p "$APP_DIR/usr/share/icons/hicolor/256x256/apps"
+
+        # Copy the app binary
+        cp "build/bin/ant-chrome" "$APP_DIR/usr/bin/ant-browser"
+        chmod +x "$APP_DIR/usr/bin/ant-browser"
+
+        # Copy runtime dependencies if they exist
+        if [ -d "bin" ]; then
+          cp -r bin/* "$APP_DIR/usr/bin/"
+        fi
+
+        # Copy Chrome core if it exists
+        if [ -d "chrome" ]; then
+          cp -r chrome "$APP_DIR/usr/bin/"
+        fi
+
+        # Create desktop file
+        cat > "$APP_DIR/usr/share/applications/ant-browser.desktop" << EOF
+        [Desktop Entry]
+        Name=Ant Browser
+        Exec=ant-browser
+        Icon=ant-browser
+        Type=Application
+        Categories=Network;WebBrowser;
+        Comment=Browser Management Tool
+        EOF
+
+        # Create AppDir metadata
+        cat > "$APP_DIR/AppDir" << EOF
+        [AppDir]
+        Name=Ant Browser
+        Exec=ant-browser
+        Icon=ant-browser
+        EOF
+
+        # Create icon (placeholder - replace with actual icon)
+        convert -size 256x256 xc:blue "$APP_DIR/usr/share/icons/hicolor/256x256/apps/ant-browser.png" 2>/dev/null || \
+          cp "$APP_DIR/usr/bin/ant-chrome" "$APP_DIR/usr/share/icons/hicolor/256x256/apps/ant-browser.png" 2>/dev/null || \
+          touch "$APP_DIR/usr/share/icons/hicolor/256x256/apps/ant-browser.png"
+
+    - name: Build AppImage
+      run: |
+        VERSION="${{ steps.get_version.outputs.VERSION }}"
+
+        # Download and setup appimagetool
+        wget -q https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
+        chmod +x appimagetool-x86_64.AppImage
+
+        mkdir -p release-artifacts
+        VERSION="${VERSION#v}" ./appimagetool-x86_64.AppImage publish/appdir "release-artifacts/AntBrowser-${VERSION}-x86_64.AppImage"
+
+    - name: Create tar.gz archive
+      run: |
+        VERSION="${{ steps.get_version.outputs.VERSION }}"
+        mkdir -p release-artifacts
+
+        # Create tarball
+        tar -czvf "release-artifacts/AntBrowser-${VERSION}-linux-x86_64.tar.gz" -C build/bin .
+
+    - name: Create deb package
+      run: |
+        VERSION="${{ steps.get_version.outputs.VERSION }}"
+        VERSION_NUM="${VERSION#v}"
+        DEB_DIR="publish/deb"
+
+        mkdir -p "$DEB_DIR/DEBIAN"
+        mkdir -p "$DEB_DIR/usr/bin"
+        mkdir -p "$DEB_DIR/usr/share/applications"
+
+        # Copy binary
+        cp "build/bin/ant-chrome" "$DEB_DIR/usr/bin/ant-browser"
+        chmod +x "$DEB_DIR/usr/bin/ant-browser"
+
+        # Copy runtime dependencies
+        if [ -d "bin" ]; then
+          for f in bin/*; do
+            if [ -f "$f" ]; then
+              cp "$f" "$DEB_DIR/usr/bin/"
+            fi
+          done
+        fi
+
+        # Create control file
+        cat > "$DEB_DIR/DEBIAN/control" << EOF
+        Package: ant-browser
+        Version: ${VERSION_NUM}
+        Section: utils
+        Priority: optional
+        Architecture: amd64
+        Depends: libgtk-3-0, libwebkit2gtk-4.0-37, libappindicator3-1
+        Maintainer: Ant Browser Team
+        Description: Browser Management Tool
+         A powerful browser management tool with fingerprint isolation
+         and proxy management capabilities.
+        EOF
+
+        # Create desktop file
+        cat > "$DEB_DIR/usr/share/applications/ant-browser.desktop" << EOF
+        [Desktop Entry]
+        Name=Ant Browser
+        Exec=ant-browser
+        Icon=ant-browser
+        Type=Application
+        Categories=Network;WebBrowser;
+        Comment=Browser Management Tool
+        EOF
+
+        # Build deb package
+        dpkg-deb --build "$DEB_DIR" "release-artifacts/ant-browser_${VERSION_NUM}_amd64.deb"
+
+    - name: Upload Linux artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: linux-builds
+        path: |
+          release-artifacts/*.AppImage
+          release-artifacts/*.tar.gz
+          release-artifacts/*.deb
+        retention-days: 7
+
+  # ========== 创建 GitHub Release ==========
+  create-release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: [build-windows, build-macos, build-linux]
+
+    steps:
+    - name: Check out code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Download all artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: release-artifacts
+
+    - name: Get version
+      id: get_version
+      run: |
+        if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+          echo "VERSION=${{ inputs.version }}" >> $GITHUB_OUTPUT
+        else
+          echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Generate changelog
+      id: changelog
+      run: |
+        PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+
+        if [ -z "$PREV_TAG" ]; then
+          CHANGELOG=$(git log --pretty=format:"- %s (%h)" --no-merges)
+        else
+          CHANGELOG=$(git log ${PREV_TAG}..HEAD --pretty=format:"- %s (%h)" --no-merges)
+        fi
+
+        echo "$CHANGELOG" > CHANGELOG.txt
+
+        echo "changelog<<EOF" >> $GITHUB_OUTPUT
+        echo "$CHANGELOG" >> $GITHUB_OUTPUT
+        echo "EOF" >> $GITHUB_OUTPUT
+
+    - name: Prepare release assets
+      run: |
+        VERSION="${{ steps.get_version.outputs.VERSION }}"
+        mkdir -p release-assets
+
+        # Flatten and rename artifacts
+        for dir in release-artifacts/*/; do
+          if [ "$dir" != "release-artifacts/" ]; then
+            cp "$dir"* release-assets/ 2>/dev/null || true
+          fi
+        done
+
+        # List all assets
+        echo "Release assets:"
+        ls -la release-assets/
+
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v2
+      with:
+        name: Release ${{ steps.get_version.outputs.VERSION }}
+        body: |
+          ## 🎉 Release ${{ steps.get_version.outputs.VERSION }}
+
+          ### 📦 下载 / Downloads
+
+          #### Windows
+          - [Windows 安装版 / Installer](https://github.com/${{ github.repository }}/releases/download/${{ steps.get_version.outputs.VERSION }}/AntBrowser-Setup-${{ steps.get_version.outputs.VERSION }}.exe)
+          - [Windows 便携版 / Portable](https://github.com/${{ github.repository }}/releases/download/${{ steps.get_version.outputs.VERSION }}/ant-chrome.exe)
+
+          #### macOS
+          - [macOS DMG](https://github.com/${{ github.repository }}/releases/download/${{ steps.get_version.outputs.VERSION }}/AntBrowser-${{ steps.get_version.outputs.VERSION }}-macos.dmg)
+
+          #### Linux
+          - [Linux AppImage](https://github.com/${{ github.repository }}/releases/download/${{ steps.get_version.outputs.VERSION }}/AntBrowser-${{ steps.get_version.outputs.VERSION }}-x86_64.AppImage)
+          - [Linux tar.gz](https://github.com/${{ github.repository }}/releases/download/${{ steps.get_version.outputs.VERSION }}/AntBrowser-${{ steps.get_version.outputs.VERSION }}-linux-x86_64.tar.gz)
+          - [Debian/Ubuntu deb](https://github.com/${{ github.repository }}/releases/download/${{ steps.get_version.outputs.VERSION }}/ant-browser_${{ steps.get_version.outputs.VERSION }}_amd64.deb)
+
+          ### 📝 更新内容 / Changelog
+
+          ${{ steps.changelog.outputs.changelog }}
+
+          ### 🔧 安装说明 / Installation
+
+          #### Windows
+          1. 下载 `AntBrowser-Setup-*.exe` 安装程序
+          2. 运行安装程序并按提示完成安装
+          3. 或者下载 `ant-chrome.exe` 便携版直接运行
+
+          #### macOS
+          1. 下载 `AntBrowser-*.dmg`
+          2. 打开 DMG 并将应用拖拽到 Applications 文件夹
+
+          #### Linux
+          - **AppImage**: 下载后添加执行权限并运行
+            ```bash
+            chmod +x AntBrowser-*.AppImage
+            ./AntBrowser-*.AppImage
+            ```
+          - **tar.gz**: 解压后运行
+            ```bash
+            tar -xzf AntBrowser-*.tar.gz
+            ./ant-chrome
+            ```
+          - **Debian/Ubuntu**: 使用 dpkg 安装
+            ```bash
+            sudo dpkg -i ant-browser_*.deb
+            ```
+
+          ### 📊 项目信息
+
+          - Go 版本：1.22+
+          - 前端框架：React + TypeScript + Vite
+          - UI 框架：Wails v2 + TailwindCSS
+
+          ### 🔗 相关链接
+
+          - [项目文档](https://github.com/${{ github.repository }})
+          - [问题反馈](https://github.com/${{ github.repository }}/issues)
+          - [更新日志](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md)
+        draft: false
+        prerelease: false
+        files: release-assets/*

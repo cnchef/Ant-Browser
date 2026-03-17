@@ -1,0 +1,65 @@
+name: Go Test
+
+on:
+  push:
+    branches: [ main, master, develop ]
+  pull_request:
+    branches: [ main, master, develop ]
+
+jobs:
+  test:
+    name: Test with Go ${{ matrix.go-version }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false  # Don't cancel other jobs when one fails
+      matrix:
+        # Test on multiple Go versions including the latest stable
+        # 'stable' will automatically use the newest Go release (1.24, 1.25, etc.)
+        go-version: ['1.20', '1.21', '1.22', '1.23', 'stable']
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    
+    steps:
+    - name: Check out code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ matrix.go-version }}
+
+    - name: Get dependencies
+      run: go mod download
+
+    - name: Run tests
+      run: go test -v ./...
+
+    - name: Generate coverage report
+      if: matrix.os == 'ubuntu-latest' && matrix.go-version == 'stable'
+      run: go test -coverprofile=coverage.txt -covermode=atomic ./...
+
+    - name: Upload coverage to Codecov
+      if: matrix.os == 'ubuntu-latest' && matrix.go-version == 'stable'
+      uses: codecov/codecov-action@v4
+      with:
+        file: ./coverage.txt
+        fail_ci_if_error: false
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Check out code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: 'stable'
+
+    - name: Run golangci-lint
+      uses: golangci/golangci-lint-action@v4
+      with:
+        version: latest
+        args: --timeout=5m
+

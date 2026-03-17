@@ -3,6 +3,8 @@ package browser
 import (
 	"archive/zip"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"net/http"
@@ -40,6 +42,22 @@ func (cw *coreDownloadWriter) Write(p []byte) (int, error) {
 	return cw.writeFunc(p)
 }
 
+// calculateFileSHA256 计算文件的 SHA256 哈希值
+func calculateFileSHA256(filePath string) (string, error) {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+
+	hasher := sha256.New()
+	if _, err := io.Copy(hasher, file); err != nil {
+		return "", err
+	}
+
+	return hex.EncodeToString(hasher.Sum(nil)), nil
+}
+
 // readWindowsSystemProxy 从 Windows 注册表读取当前系统代理（WinINet，Clash 就是写这里）
 // 返回格式如 "http://127.0.0.1:7890" 或 "socks5://127.0.0.1:7891"
 func readWindowsSystemProxy() (string, error) {
@@ -73,7 +91,8 @@ func readWindowsSystemProxy() (string, error) {
 }
 
 // DownloadAndExtractCore 执行异步下载解压并在过程中发送事件
-func (m *Manager) DownloadAndExtractCore(ctx context.Context, coreName string, targetUrl string, proxyConfig string) {
+// expectedSHA256 为空时跳过校验
+func (m *Manager) DownloadAndExtractCore(ctx context.Context, coreName string, targetUrl string, proxyConfig string, expectedSHA256 string) {
 	log := logger.New("Browser")
 	t := time.Now()
 
@@ -160,6 +179,24 @@ func (m *Manager) DownloadAndExtractCore(ctx context.Context, coreName string, t
 	}
 
 	tempFile.Close() // 解压前先关闭写句柄
+
+	// SHA256 校验（如果提供了预期哈希）
+	if expectedSHA256 != "" {
+		sendEvent("extracting", 0, "正在验证文件完整性...")
+		actualHash, err := calculateFileSHA256(tempFilePath)
+		if err != nil {
+			sendEvent("error", 0, "计算文件哈希失败："+err.Error())
+			return
+		}
+		if !strings.EqualFold(actualHash, expectedSHA256) {
+			sendEvent("error", 0, fmt.Sprintf(
+				"文件哈希不匹配！预期：%s，实际：%s",
+				expectedSHA256, actualHash))
+			return
+		}
+		sendEvent("extracting", 0, "文件完整性验证通过")
+	}
+
 	sendEvent("extracting", 0, "下载完成，正在准备解压文件...")
 	log.Info("内核下载完成", logger.F("url", targetUrl), logger.F("temp", tempFilePath), logger.F("cost", time.Since(t).String()))
 

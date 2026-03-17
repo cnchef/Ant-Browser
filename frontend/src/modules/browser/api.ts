@@ -284,10 +284,10 @@ export async function scanBrowserCores(): Promise<BrowserCore[]> {
   return mockCores
 }
 
-export async function BrowserCoreDownload(coreName: string, url: string, proxyConfig?: string): Promise<boolean> {
+export async function BrowserCoreDownload(coreName: string, url: string, proxyConfig?: string, expectedSHA256?: string): Promise<boolean> {
   const bindings: any = await getBindings()
   if (bindings?.BrowserCoreDownload) {
-    await bindings.BrowserCoreDownload(coreName, url, proxyConfig || '')
+    await bindings.BrowserCoreDownload(coreName, url, proxyConfig || '', expectedSHA256 || '')
     return true
   }
   return true

@@ -147,7 +147,8 @@ func (a *App) startup(ctx context.Context) {
 
 	// 启动 LaunchServer
 	port := a.config.LaunchServer.Port
-	a.launchServer = launchcode.NewLaunchServer(a.launchCodeSvc, a, a.browserMgr, port)
+	apiToken := a.config.LaunchServer.APIToken
+	a.launchServer = launchcode.NewLaunchServer(a.launchCodeSvc, a, a.browserMgr, port, apiToken)
 	if err := a.launchServer.Start(); err != nil {
 		log.Error("LaunchServer 启动失败", logger.F("error", err))
 	} else {
@@ -476,12 +477,12 @@ func (a *App) BrowserCoreScan() []BrowserCore {
 }
 
 // BrowserCoreDownload 在线下载并自动解压配置内核
-func (a *App) BrowserCoreDownload(coreName, url, proxyConfig string) error {
+func (a *App) BrowserCoreDownload(coreName, url, proxyConfig, expectedSHA256 string) error {
 	if a.ctx == nil {
 		return fmt.Errorf("app context is nil")
 	}
 	// 异步启动下载流程，以防阻塞前端请求，通过 Wails events 发送进度
-	go a.browserMgr.DownloadAndExtractCore(a.ctx, coreName, url, proxyConfig)
+	go a.browserMgr.DownloadAndExtractCore(a.ctx, coreName, url, proxyConfig, expectedSHA256)
 	return nil
 }
 
@@ -1157,6 +1158,11 @@ func (a *App) migrateToSQLite() {
 				{Name: "Claude", URL: "https://claude.ai/"},
 				{Name: "ChatGPT", URL: "https://chatgpt.com/"},
 				{Name: "YouTube", URL: "https://www.youtube.com/"},
+				{Name: "Google Gemini", URL: "https://gemini.google.com/app"},
+				{Name: "ipsb", URL: "https://ip.sb/"},
+				{Name: "time", URL: "https://time.is/Panama"},
+				{Name: "ipinfo", URL: "https://ipinfo.io/ip"},
+				{Name: "fingerprint-check", URL: "https://pixelscan.net/fingerprint-check"},
 			}
 		}
 		if err := a.browserMgr.BookmarkDAO.ReplaceAll(src); err != nil {

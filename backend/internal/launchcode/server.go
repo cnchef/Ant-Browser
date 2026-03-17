@@ -60,6 +60,7 @@ type LaunchServer struct {
 	service    *LaunchCodeService
 	starter    BrowserStarter
 	browserMgr *browser.Manager
+	apiToken   string
 	port       int
 	server     *http.Server
 	mu         sync.Mutex
@@ -68,11 +69,12 @@ type LaunchServer struct {
 }
 
 // NewLaunchServer 创建 LaunchServer
-func NewLaunchServer(service *LaunchCodeService, starter BrowserStarter, mgr *browser.Manager, port int) *LaunchServer {
+func NewLaunchServer(service *LaunchCodeService, starter BrowserStarter, mgr *browser.Manager, port int, apiToken string) *LaunchServer {
 	return &LaunchServer{
 		service:    service,
 		starter:    starter,
 		browserMgr: mgr,
+		apiToken:   apiToken,
 		port:       port,
 	}
 }
@@ -88,7 +90,7 @@ func (s *LaunchServer) Start() error {
 	mux.HandleFunc("/api/launch/logs", s.handleLaunchLogs)
 	mux.HandleFunc("/api/launch/", s.handleLaunch)
 
-	handler := s.localhostMiddleware(mux)
+	handler := s.securityMiddleware(mux)
 
 	preferredPort := s.port
 	ln, port, usedFallbackRandom, err := bindLaunchListener(preferredPort)
@@ -194,9 +196,10 @@ func (s *LaunchServer) Port() int {
 	return s.port
 }
 
-// localhostMiddleware 只允许 127.0.0.1 访问
-func (s *LaunchServer) localhostMiddleware(next http.Handler) http.Handler {
+// securityMiddleware 安全中间件：验证 localhost + 可选的 Token 认证
+func (s *LaunchServer) securityMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// 1. 验证 localhost
 		host, _, err := net.SplitHostPort(r.RemoteAddr)
 		if err != nil || host != "127.0.0.1" {
 			writeJSON(w, http.StatusForbidden, map[string]interface{}{
@@ -205,6 +208,29 @@ func (s *LaunchServer) localhostMiddleware(next http.Handler) http.Handler {
 			})
 			return
 		}
+
+		// 2. 如果配置了 token，验证 Authorization 头
+		if s.apiToken != "" {
+			authHeader := r.Header.Get("Authorization")
+			if authHeader == "" {
+				writeJSON(w, http.StatusUnauthorized, map[string]interface{}{
+					"ok":    false,
+					"error": "unauthorized: missing Authorization header",
+				})
+				return
+			}
+
+			// 支持 Bearer token 格式或直接 token
+			expectedToken := "Bearer " + s.apiToken
+			if authHeader != expectedToken && authHeader != s.apiToken {
+				writeJSON(w, http.StatusUnauthorized, map[string]interface{}{
+					"ok":    false,
+					"error": "unauthorized: invalid token",
+				})
+				return
+			}
+		}
+
 		next.ServeHTTP(w, r)
 	})
 }

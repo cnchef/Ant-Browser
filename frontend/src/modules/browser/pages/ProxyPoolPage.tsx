@@ -7,7 +7,7 @@ import { EventsOn } from '../../../wailsjs/runtime/runtime'
 import yaml from 'js-yaml'
 
 // 内置代理 ID，不可删除、不可编辑
-const BUILTIN_PROXY_IDS = new Set(['__direct__', '__local__'])
+const BUILTIN_PROXY_IDS = new Set(['__direct__'])
 const PROXY_LATENCY_CACHE_KEY = 'browser:proxyPool:latencyMap:v1'
 const PROXY_IP_HEALTH_CACHE_KEY = 'browser:proxyPool:ipHealthMap:v1'
 const PROXY_SOURCE_IGNORED_NAMES_KEY = 'browser:proxyPool:sourceIgnoredProxyNames:v1'

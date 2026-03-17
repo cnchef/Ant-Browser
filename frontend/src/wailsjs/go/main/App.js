@@ -42,8 +42,8 @@ export function BrowserCoreDelete(arg1) {
   return window['go']['main']['App']['BrowserCoreDelete'](arg1);
 }
 
-export function BrowserCoreDownload(arg1, arg2, arg3) {
-  return window['go']['main']['App']['BrowserCoreDownload'](arg1, arg2, arg3);
+export function BrowserCoreDownload(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['BrowserCoreDownload'](arg1, arg2, arg3, arg4);
 }
 
 export function BrowserCoreExtendedInfo() {

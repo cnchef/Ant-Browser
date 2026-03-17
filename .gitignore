@@ -70,3 +70,6 @@ coverage/
 .env
 .env.*
 !.env.example
+/vendor
+/chrome
+/data

@@ -63,33 +63,33 @@ export const profilePageConfig: ProfilePageLocalConfig = {
     // 后续你补真实地址时，直接替换这里即可。
     // https://static.antblack.de/profile/author.json
     // https://raw.githubusercontent.com/<user>/<repo>/main/author.json
-    authorURL: 'http://10.255.255.1/profile-author.json',
+    authorURL: 'http://x.x.x.x/profile-author.json',
     timeoutMs: 1000,
   },
   defaultAuthor: {
-    name: '志字辈小蚂蚁',
-    initial: '志',
+    name: 'chef',
+    initial: 'chef',
     title: '全栈开发工程师',
     bio: '热爱开源，专注于 Web 和桌面应用开发。致力于打造优雅、高效的开发工具和框架。',
     location: '中国',
-    joinDate: '2020',
-    email: 'contact@antblack.dev',
-    website: 'http://blog.antblack.de',
-    github: 'https://github.com/black-ant',
-    skills: ['Go', 'React', 'TypeScript', 'Wails', 'Node.js', 'Docker'],
+    joinDate: '2026',
+    email: 'xxx@xxx.dev',
+    website: 'https://chenfyu.com/',
+    github: 'https://github.com/cnchef',
+    skills: ['Python', 'Go', 'React', 'TypeScript', 'Wails', 'Node.js', 'Docker'],
     channels: [
       {
         name: '掘金',
         description: '技术文章与开发记录',
         detail: 'juejin.cn',
-        href: 'https://juejin.cn/user/3790771822007822',
+        href: 'https://chenfyu.com/',
         icon: 'book-open',
       },
       {
         name: '个人博客',
         description: '独立站文章与项目归档',
-        detail: 'blog.antblack.de',
-        href: 'http://blog.antblack.de',
+        detail: 'chenfyu.com',
+        href: 'https://chenfyu.com/',
         icon: 'globe',
       },
       {

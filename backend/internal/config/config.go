@@ -12,7 +12,8 @@ import (
 // LaunchServerConfig Launch HTTP 服务配置
 type LaunchServerConfig struct {
 	// Port <= 0 时自动分配随机可用端口（推荐）。
-	Port int `yaml:"port"`
+	Port     int    `yaml:"port"`
+	APIToken string `yaml:"api_token"` // Token 认证：空表示禁用，设置后启用
 }
 
 // Config 应用配置
@@ -333,14 +334,14 @@ func DefaultConfig() *Config {
 			},
 		},
 		App: AppConfig{
-			Name: "Ant Browser",
+			Name: "Privacy Browser",
 			Window: WindowConfig{
 				Width:     1750,
 				Height:    1000,
 				MinWidth:  1200,
 				MinHeight: 700,
 			},
-			MaxProfileLimit: 3,
+			MaxProfileLimit: 10, // 实例数
 			UsedCDKeys:      []string{},
 		},
 		Runtime: RuntimeConfig{
