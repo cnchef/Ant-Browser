@@ -172,14 +172,14 @@ SectionEnd
 Section "Proxy Runtime (xray / sing-box)" SecRuntime
   SectionIn RO
   SetOutPath "$INSTDIR\bin"
-  File "${STAGINGDIR}\bin\xray.exe"
-  File "${STAGINGDIR}\bin\sing-box.exe"
+  File /nonfatal "${STAGINGDIR}\bin\xray.exe"
+  File /nonfatal "${STAGINGDIR}\bin\sing-box.exe"
 SectionEnd
 
 Section "Chrome Engine" SecChrome
   SectionIn RO
   SetOutPath "$INSTDIR\chrome"
-  File /r "${STAGINGDIR}\chrome\*.*"
+  File /nonfatal /r "${STAGINGDIR}\chrome\*.*"
 SectionEnd
 
 Section /o "Desktop Shortcut" SecDesktop
